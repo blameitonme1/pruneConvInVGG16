@@ -163,7 +163,7 @@ class PrunningFineTuner_VGG16:
         if args.use_cuda:
             batch = batch.cuda()
             label = label.cuda()
-
+        # 清空梯度，防止梯度累积
         self.model.zero_grad()
         input = batch
         if rank_filters:
@@ -233,11 +233,12 @@ class PrunningFineTuner_VGG16:
             message = str(100*float(self.total_num_filters()) / number_of_filters) + "%"
             print("Filters prunned", str(message))
             self.test()
+            # 基本上，finetune就是多训练几次，重新拟合一下罢了
             print("Fine tuning to rcover from prunning iteration.")
             optimizer = optim.SGD(self.model.parameters(), lr=0.001, momentum=0.9)
             self.train(optimizer, epoches = 10)
 
-        print("Finised. Going to fine tune the model a bit.")
+        print("Finised. Going to fine tune the model a bit more.")
         self.train(optimizer, epoches = 15)
         torch.save(self.model.state_dict(), "model_prunned")
 
@@ -247,7 +248,7 @@ def get_args():
     parser.add_argument("--prune", dest="prune", action="store_true")
     parser.add_argument("--train_path", type = str, default = "train")
     parser.add_argument("--test_path", type = str, default = "test")
-    parser.add_argument('--use--cuda', action='store_true', default=False, help='use nvidia gpu')
+    parser.add_argument('--use-cuda', action='store_true', default=False, help='use nvidia gpu')
     parser.set_defaults(train=False)
     parser.set_defaults(prune=False)
     args = parser.parse_args()
@@ -272,7 +273,7 @@ if __name__ == '__main__':
     
     elif args.prune:
         fine_tuner.prune()
-    
+
     
 
 

@@ -108,7 +108,7 @@ def prune_vgg16_conv_layer(model, layer_index, filter_index, use_cuda=False):
         # 计算每一个channel的参数数量
         params_per_input_channel = old_linear_layer.in_features // conv.out_channels
         new_linear_layer = nn.Linear(
-            # 因为会减少一个filter，等于减少一个channel
+            # 因为会减少一个filter，等于减少一个channel的输入
             old_linear_layer.in_features - params_per_input_channel, 
             old_linear_layer.out_features
         )

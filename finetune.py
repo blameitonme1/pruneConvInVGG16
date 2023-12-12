@@ -147,96 +147,134 @@ class PrunningFineTuner_VGG16:
 
         self.model.train()
 
-        def train(self, optimizer=None, epoches=10):
-            if optimizer is None:
-                # 注意优化器的问题，找时间复习一下
-                optimizer = optim.SGD(model.classifier.parameters(), lr=0.0001, momentum = 0.9)
+    def train(self, optimizer=None, epoches=10):
+        if optimizer is None:
+            # 注意优化器的问题，找时间复习一下
+            optimizer = optim.SGD(model.classifier.parameters(), lr=0.0001, momentum = 0.9)
 
-            for i in range(epoches):
-                print("Epoch: ", i)
-                self.train_epoch(optimizer)
-                self.test()
-            print("Finised fine tuning")
-        
-        def train_batch(self, optimizer, batch, label, rank_filters):
-
-            if args.use_cuda:
-                batch = batch.cuda()
-                label = label.cuda()
-
-            self.model.zero_grad()
-            input = batch
-            if rank_filters:
-                output = self.prunner.forward(input)
-                # 计算梯度的时候，会顺带计算filter的rank
-                self.criterion(output, label).backward()
-            else:
-                self.criterion(self.model(input), label).backward()
-                optimizer.step()
-        
-        def train_epoch(self, optimizer = None, rank_filters = False):
-            for i, (batch, label) in enumerate(self.train_data_loader):
-                self.train_batch(optimizer, batch, label, rank_filters)
-        
-        def get_candidate_to_prune(self, num_filters_to_prune):
-            self.prunner.reset()
-            self.train_epoch(rank_filters = True)
-            self.prunner.normalize_ranks_per_layer()
-            # 这里存疑
-            return self.prunner.get_prunning_plan(num_filters_to_prune)
-        
-        def total_num_filters(self):
-            # 这里存疑 (修改：filter个数就是out_channel的个数！！！只不过维度包含了in_channels而已)
-            filters = 0
-            for name, module in self.model.features._modules.items():
-                if isinstance(module, torch.nn.modules.conv.Conv2d):
-                    filters = filters + model.out_channels
-            
-            return filters
-        def prune(self):
+        for i in range(epoches):
+            print("Epoch: ", i)
+            self.train_epoch(optimizer)
             self.test()
-            self.model.train()
+        print("Finised fine tuning")
+        
+    def train_batch(self, optimizer, batch, label, rank_filters):
 
-            # 保证所有的layers都可训练，因为之前可能冻结了
-            for param in self.model.features.parameters():
-                param.requires_grad = True
+        if args.use_cuda:
+            batch = batch.cuda()
+            label = label.cuda()
+
+        self.model.zero_grad()
+        input = batch
+        if rank_filters:
+            output = self.prunner.forward(input)
+            # 计算梯度的时候，会顺带计算filter的rank
+            self.criterion(output, label).backward()
+        else:
+            self.criterion(self.model(input), label).backward()
+            optimizer.step()
+    
+    def train_epoch(self, optimizer = None, rank_filters = False):
+        for i, (batch, label) in enumerate(self.train_data_loader):
+            self.train_batch(optimizer, batch, label, rank_filters)
+    
+    def get_candidate_to_prune(self, num_filters_to_prune):
+        self.prunner.reset()
+        self.train_epoch(rank_filters = True)
+        self.prunner.normalize_ranks_per_layer()
+        # 这里存疑
+        return self.prunner.get_prunning_plan(num_filters_to_prune)
+    
+    def total_num_filters(self):
+        # 这里存疑 (修改：filter个数就是out_channel的个数！！！只不过维度包含了in_channels而已)
+        filters = 0
+        for name, module in self.model.features._modules.items():
+            if isinstance(module, torch.nn.modules.conv.Conv2d):
+                filters = filters + model.out_channels
+        
+        return filters
+    def prune(self):
+        self.test()
+        self.model.train()
+
+        # 保证所有的layers都可训练，因为之前可能冻结了
+        for param in self.model.features.parameters():
+            param.requires_grad = True
+        
+        number_of_filters = self.total_num_filters()
+        num_filters_to_prune_per_iteration = 512
+        iterations = int(float(number_of_filters) / num_filters_to_prune_per_iteration)
+        # 因为要prune掉67%的filter
+        iterations = int(iterations * 2.0 / 3)
+
+        print("Number of iterations to prune 67% filters", iterations)
+
+        for _ in range(iterations):
+            # 开始prune, finetune, prune的loop，持续iterations次
+            print("Ranking filters..")
+            prune_targets = self.get_candidate_to_prune(num_filters_to_prune_per_iteration)
+            layers_prunned = {}
+            for layer_index, filter_index in prune_targets:
+                if layer_index not in layers_prunned:
+                    layers_prunned[layer_index] = 0
+                # 统计该层prune的filter的数量
+                layers_prunned[layer_index] = layers_prunned[layer_index] + 1
             
-            number_of_filters = self.total_num_filters()
-            num_filters_to_prune_per_iteration = 512
-            iterations = int(float(number_of_filters) / num_filters_to_prune_per_iteration)
-            # 因为要prune掉67%的filter
-            iterations = int(iterations * 2.0 / 3)
+            print("Layers tha will be pruned", layers_prunned)
+            print("Prunning filters.. ")
+            # 先转到cpu方便进行numpy的计算
+            model = self.model.cpu()
+            for layer_index, filter_index in prune_targets:
+                model = prune_vgg16_conv_layer(model, layer_index, filter_index, use_cuda=args.use_cuda)
+            # 更新model
+            self.model = model
+            if args.use_cuda:
+                self.model = self.model.cuda()
+            message = str(100*float(self.total_num_filters()) / number_of_filters) + "%"
+            print("Filters prunned", str(message))
+            self.test()
+            print("Fine tuning to rcover from prunning iteration.")
+            optimizer = optim.SGD(self.model.parameters(), lr=0.001, momentum=0.9)
+            self.train(optimizer, epoches = 10)
 
-            print("Number of iterations to prune 67% filters", iterations)
+        print("Finised. Going to fine tune the model a bit.")
+        self.train(optimizer, epoches = 15)
+        torch.save(self.model.state_dict(), "model_prunned")
 
-            for _ in range(iterations):
-                # 开始prune, finetune, prune的loop，持续iterations次
-                print("Ranking filters..")
-                prune_targets = self.get_candidate_to_prune(num_filters_to_prune_per_iteration)
-                layers_prunned = {}
-                for layer_index, filter_index in prune_targets:
-                    if layer_index not in layers_prunned:
-                        layers_prunned[layer_index] = 0
-                    # 统计该层prune的filter的数量
-                    layers_prunned[layer_index] = layers_prunned[layer_index] + 1
-                
-                print("Layers tha will be pruned", layers_prunned)
-                print("Prunning filters.. ")
-                # 先转到cpu方便进行numpy的计算
-                model = self.model.cpu()
-                for layer_index, filter_index in prune_targets:
-                    model = prune_vgg16_conv_layer(model, layer_index, filter_index, use_cuda=args.use_cuda)
-                # 更新model
-                self.model = model
-                if args.use_cuda:
-                    self.model = self.model.cuda()
-                message = str(100*float(self.total_num_filters()) / number_of_filters) + "%"
-                print("Filters prunned", str(message))
-                self.test()
-                print("Fine tuning to rcover from prunning iteration.")
-                optimizer = optim.SGD(self.model.parameters(), lr=0.001, momentum=0.9)
-                self.train(optimizer, epoches = 10)
+def get_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--train", dest="train", action="store_true")
+    parser.add_argument("--prune", dest="prune", action="store_true")
+    parser.add_argument("--train_path", type = str, default = "train")
+    parser.add_argument("--test_path", type = str, default = "test")
+    parser.add_argument('--use--cuda', action='store_true', default=False, help='use nvidia gpu')
+    parser.set_defaults(train=False)
+    parser.set_defaults(prune=False)
+    args = parser.parse_args()
+    args.use_cuda = args.use_cuda and torch.cuda.is_available()
+    return args
 
-            print("Finised. Going to fine tune the model a bit.")
-            self.train(optimizer, epoches = 15)
-            torch.save(self.model.state_dict(), "model_prunned")
+if __name__ == '__main__':
+    args = get_args()
+    if args.train:
+        model = ModifiedVGG16Model()
+    elif args.prune:
+        # load pretrained VGG ,如果需要prune的话
+        model = torch.load("model", map_location=lambda storage, loc : storage)
+
+    if args.use_cuda:
+        model = model.cuda()
+    fine_tuner = PrunningFineTuner_VGG16(args.train_path, args.test_path, model)
+
+    if args.train:
+        fine_tuner.train(epoches=10)
+        torch.save(model, "model")
+    
+    elif args.prune:
+        fine_tuner.prune()
+    
+    
+
+
+
+    

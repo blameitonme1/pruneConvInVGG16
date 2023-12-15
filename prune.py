@@ -57,7 +57,7 @@ def prune_vgg16_conv_layer(model, layer_index, filter_index, use_cuda=False):
         # 自从layer_index的下一个卷积层, 因为上一层修改了out_channels,所以这一层也要修改in_channels,这也就是为什么要find next
         # conv2d layer
         next_new_conv = torch.nn.Conv2d(
-            in_channels=next_conv.in_channels,
+            in_channels=next_conv.in_channels - 1,
             out_channels=next_conv.out_channels,
             kernel_size=next_conv.kernel_size,
             stride = next_conv.stride,
@@ -74,7 +74,7 @@ def prune_vgg16_conv_layer(model, layer_index, filter_index, use_cuda=False):
         new_weights[:, filter_index : , :, :] = old_weights[:, filter_index + 1 :, :, :]
         next_new_conv.weight.data = torch.from_numpy(new_weights)
         if use_cuda:
-            next_new_conv.weight.data = next_new_conv.weight.data.cuda
+            next_new_conv.weight.data = next_new_conv.weight.data.cuda()
         next_new_conv.bias.data = next_conv.bias.data
     if not next_conv is None:
         # 删除两个layer并生成新的model.feature
@@ -119,7 +119,7 @@ def prune_vgg16_conv_layer(model, layer_index, filter_index, use_cuda=False):
         new_weights[:, params_per_input_channel * filter_index :] = old_weights[:, params_per_input_channel * (filter_index + 1) : ]
         new_linear_layer.weight.data = torch.from_numpy(new_weights)
         if use_cuda:
-            new_linear_layer.weight.data = new_linear_layer.weight.data.cuda
+            new_linear_layer.weight.data = new_linear_layer.weight.data.cuda()
         # bias不需要修改，因为bias维度是out_channels，直接复制,为什么要使用data，我猜测可能和deep copy有关
         new_linear_layer.bias.data = old_linear_layer.bias.data
         classifier = nn.Sequential(
@@ -131,7 +131,6 @@ def prune_vgg16_conv_layer(model, layer_index, filter_index, use_cuda=False):
         del conv
         model.classifier = classifier
     return model
-
 if __name__ == '__main__':
     model = models.vgg16(pretrained=True)
     model.train()

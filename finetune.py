@@ -95,7 +95,7 @@ class FilterPrunner:
         for i in self.filter_ranks:
             # ranks可以理解为importance，对于loss函数的贡献
             v = torch.abs(self.filter_ranks[i])
-            v = v / np.sqrt(torch.sum(v * v))
+            v = v / np.sqrt((torch.sum(v * v)).cpu())
             self.filter_ranks[i] = v.cpu()
 
     def get_prunning_plan(self, num_filters_to_prune):
@@ -190,7 +190,7 @@ class PrunningFineTuner_VGG16:
         filters = 0
         for name, module in self.model.features._modules.items():
             if isinstance(module, torch.nn.modules.conv.Conv2d):
-                filters = filters + model.out_channels
+                filters = filters + module.out_channels
         
         return filters
     def prune(self):

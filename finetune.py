@@ -12,8 +12,8 @@ import time
 from heapq import nsmallest
 from operator import itemgetter
 class ModifiedVGG16Model(torch.nn.Module):
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(self) -> None:
+        super().__init__()
         model = models.vgg16(pretrained=True)
         self.features = model.features
         # 冻结这些参数，使他们不会更新
@@ -55,6 +55,7 @@ class FilterPrunner:
             X = module(X)
             if isinstance(module, nn.modules.conv.Conv2d):
                 # 计算梯度的时候顺带执行用户自定义的函数（这里是compute_rank）
+                X = X.cuda()
                 X.register_hook(self.compute_rank)
                 self.activations.append(X)
                 # layer是原来的模型里面的下标
@@ -144,10 +145,12 @@ class PrunningFineTuner_VGG16:
             correct += pred.cpu().eq(label).sum()
             total += label.size(0)
         print("Accuracy: ", float(correct) / total)
-
-        self.model.train()
+        # 为什么要训练？有点莫名其妙
+        # self.model.train()
 
     def train(self, optimizer=None, epoches=10):
+        if next(self.model.parameters()).device != torch.device('cuda'):
+            self.model = self.model.cuda()
         if optimizer is None:
             # 注意优化器的问题，找时间复习一下
             optimizer = optim.SGD(model.classifier.parameters(), lr=0.0001, momentum = 0.9)
@@ -159,13 +162,14 @@ class PrunningFineTuner_VGG16:
         print("Finised fine tuning")
         
     def train_batch(self, optimizer, batch, label, rank_filters):
-
+        t0 = time.time()
         if args.use_cuda:
             batch = batch.cuda()
             label = label.cuda()
         # 清空梯度，防止梯度累积
         self.model.zero_grad()
         input = batch
+        input.requires_grad = True
         if rank_filters:
             output = self.prunner.forward(input)
             # 计算梯度的时候，会顺带计算filter的rank
@@ -173,9 +177,11 @@ class PrunningFineTuner_VGG16:
         else:
             self.criterion(self.model(input), label).backward()
             optimizer.step()
+        print(f" time for this training batch is {time.time() - t0} ")
     
     def train_epoch(self, optimizer = None, rank_filters = False):
         for i, (batch, label) in enumerate(self.train_data_loader):
+            print(f" batch {i} trained")
             self.train_batch(optimizer, batch, label, rank_filters)
     
     def get_candidate_to_prune(self, num_filters_to_prune):
@@ -195,8 +201,6 @@ class PrunningFineTuner_VGG16:
         return filters
     def prune(self):
         self.test()
-        self.model.train()
-
         # 保证所有的layers都可训练，因为之前可能冻结了
         for param in self.model.features.parameters():
             param.requires_grad = True
@@ -235,11 +239,12 @@ class PrunningFineTuner_VGG16:
             self.test()
             # 基本上，finetune就是多训练几次，重新拟合一下罢了
             print("Fine tuning to rcover from prunning iteration.")
-            optimizer = optim.SGD(self.model.parameters(), lr=0.001, momentum=0.9)
-            self.train(optimizer, epoches = 10)
+            optimizer = optim.SGD(self.model.parameters(), lr=0.01, momentum=0.9)
+            self.train(optimizer, epoches = 1) # 我人为减少了epoch，加大了lr，到时候看看效果
 
         print("Finised. Going to fine tune the model a bit more.")
-        self.train(optimizer, epoches = 15)
+        self.train(optimizer, epoches = 10)
+        self.test()
         torch.save(self.model.state_dict(), "model_prunned")
 
 def get_args():

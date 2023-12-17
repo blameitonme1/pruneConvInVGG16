@@ -46,7 +46,7 @@ def prune_vgg16_conv_layer(model, layer_index, filter_index, use_cuda=False):
         new_conv.weight.data = new_conv.weight.data.cuda()
     # 开始处理bias
     bias_numpy = conv.bias.data.cpu().numpy()
-    bias = np.zeros(bias_numpy.shape[0] - 1, dtype=np.float32)
+    bias = np.zeros(shape = (bias_numpy.shape[0] - 1), dtype=np.float32)
     bias[:filter_index] = bias_numpy[:filter_index]
     bias[filter_index:] = bias_numpy[filter_index + 1:]
     new_conv.bias.data = torch.from_numpy(bias)
@@ -101,7 +101,7 @@ def prune_vgg16_conv_layer(model, layer_index, filter_index, use_cuda=False):
             if isinstance(module, nn.Linear):
                 old_linear_layer = module
                 break
-        layer_index += 1
+            layer_index += 1 # 我这里缩进错误了！！！导致之后prune也出现了错误！！！
         if old_linear_layer is None:
             # 类似之前学的panic的语法
             raise BaseException("No linear layer has been found in classifier")

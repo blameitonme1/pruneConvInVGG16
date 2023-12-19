@@ -11,6 +11,7 @@ import argparse
 import time
 from heapq import nsmallest
 from operator import itemgetter
+import csv
 class ModifiedVGG16Model(torch.nn.Module):
     def __init__(self) -> None:
         super().__init__()
@@ -129,24 +130,42 @@ class PrunningFineTuner_VGG16:
         self.prunner = FilterPrunner(self.model)
         self.model.train()
     
-    def test(self):
+    def test(self, kaggle=False, output_csv="submissions.csv"):
         # return  # 这里加了一个return，不知道是干嘛的
         self.model.eval()
+        if kaggle:
+            predictions = []  # 用于保存预测结果
+            image_ids = []  # 用于保存图像 ID
         correct = 0
         total = 0
         for i, (batch, label) in enumerate(self.test_data_loader):
             # 注意是批量训练，所以第一维是batch_size
-            if args.use_cuda:
+            if not kaggle:
+                if args.use_cuda:
+                    batch = batch.cuda()
+            else:
                 batch = batch.cuda()
-            output = model(batch)
+            output = self.model(batch)
             # 找到每一个样本的最大值的索引 因为max(1)返回的是(maxvalue, indexOfMaxvalue)
             pred = output.data.max(1)[1]
             # 预测正确的个数
             correct += pred.cpu().eq(label).sum()
             total += label.size(0)
+            if kaggle:
+                predictions.extend(pred.cpu().numpy())
+                image_ids.extend(label.numpy())  # 假设 label 是图像 ID
         print("Accuracy: ", float(correct) / total)
         # 为什么要训练？有点莫名其妙
         # self.model.train()
+        # 将结果保存到 CSV 文件
+        if kaggle:
+            with open(output_csv, mode='w', newline='') as file:
+                writer = csv.writer(file)
+                writer.writerow(['id', 'label'])  # 写入表头
+                for image_id, prediction in zip(image_ids, predictions):
+                    writer.writerow([image_id, prediction.item()])
+
+            print(f"Predictions saved to {output_csv}")
 
     def train(self, optimizer=None, epoches=10):
         if next(self.model.parameters()).device != torch.device('cuda'):
@@ -263,7 +282,8 @@ def get_args():
 if __name__ == '__main__':
     args = get_args()
     if args.train:
-        model = ModifiedVGG16Model()
+        # model = ModifiedVGG16Model()
+        model = torch.load("model", map_location=lambda storage, loc : storage)
     elif args.prune:
         # load pretrained VGG ,如果需要prune的话
         model = torch.load("model", map_location=lambda storage, loc : storage)
@@ -273,7 +293,7 @@ if __name__ == '__main__':
     fine_tuner = PrunningFineTuner_VGG16(args.train_path, args.test_path, model)
 
     if args.train:
-        fine_tuner.train(epoches=10)
+        fine_tuner.test()
         torch.save(model, "model")
     
     elif args.prune:

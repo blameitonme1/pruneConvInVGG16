@@ -61,7 +61,7 @@ Notice that I didn't use the second value which testloader returns (BTW, this re
 
 # Cause deteced
 
-So it's using lexicographical order to load the images! Yep, simple as it is, I spent 3 hours trying to find what's wrong about my brain, my PC, and the whole fucking world.
+So it's using lexicographical order to load the images! Yep, simple as it is, I spent 3 hours trying to find what's wrong about the world.
 Finally, use the number from the file and zip the id with probabilities. Last sort by the id's number then we're all good. Here's the correct code:
 ```python
     probabilities = []
